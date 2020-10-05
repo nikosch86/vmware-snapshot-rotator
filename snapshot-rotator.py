@@ -23,6 +23,8 @@ argparser.add_argument('-p', '--password', required=False, action='store',
     help='Password to use when connecting to host')
 argparser.add_argument('-k', '--keep', type=int, default=3, action='store',
     help='How many snapshots to keep (default: %(default)s)')
+argparser.add_argument('-n', '--dry-run', action='store_true',
+    help='Dry run')
 argparser.add_argument("--verbose", "-v", action='count', default=0)
 args = argparser.parse_args()
 
@@ -71,8 +73,6 @@ def main():
             for vm in vmList:
                 snapshot_name = date.today().isoformat()
                 summary = vm.summary
-                if summary.config.name != 'docker':
-                    continue
                 logger.info("Name       : %s" % summary.config.name)
                 logger.debug("Path       : %s" % summary.config.vmPathName)
                 logger.debug("Guest      : %s" % summary.config.guestFullName)
@@ -134,8 +134,8 @@ def main():
     return 0
 
 def create_snapshot(vm, snapshot_name):
-
     logger.debug("creating snapshot of VM '%s' using name '%s'" % (vm.summary.config.name, snapshot_name))
+    if vars(args).get('dry_run'): return
     WaitForTask(vm.CreateSnapshot_Task(
         name=snapshot_name,
         memory=False,
@@ -166,6 +166,7 @@ def delete_snapshot_by_name(snapshots, snapname):
             snap_obj.append(snapshot)
         else:
             snap_obj = snap_obj + get_snapshots_by_name_recursively(snapshot.childSnapshotList, snapname)
+    if vars(args).get('dry_run'): return
     WaitForTask(snap_obj[0].snapshot.RemoveSnapshot_Task(False))
 
 # Start program
