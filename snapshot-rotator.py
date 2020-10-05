@@ -123,7 +123,6 @@ def main():
                     to_delete = snapshots_no - (args.keep-1)
                     delete_count = 0
                     for snapshot in snapshot_paths:
-                        logger.debug("Deleting snapshot '%s' %s" % (snapshot['name'], snapshot['createTime']))
                         delete_snapshot_by_name(vm.snapshot.rootSnapshotList, snapshot['name'])
                         snapshots_deleted += 1
                         delete_count += 1
@@ -158,15 +157,19 @@ def list_snapshots_recursively(snapshots):
         snapshot_data = snapshot_data + list_snapshots_recursively(snapshot.childSnapshotList)
     return snapshot_data
 
-def delete_snapshot_by_name(snapshots, snapname):
-    logger.debug("deleting snapshot '%s'" % snapname)
+def get_snapshots_by_name_recursively(snapshots, snapname):
     snap_obj = []
     for snapshot in snapshots:
         if snapshot.name == snapname:
             snap_obj.append(snapshot)
         else:
             snap_obj = snap_obj + get_snapshots_by_name_recursively(snapshot.childSnapshotList, snapname)
+    return snap_obj
+
+def delete_snapshot_by_name(snapshots, snapname):
+    logger.debug("deleting snapshot '%s'" % snapname)
     if vars(args).get('dry_run'): return
+    snap_obj = get_snapshots_by_name_recursively(snapshots, snapname)
     WaitForTask(snap_obj[0].snapshot.RemoveSnapshot_Task(False))
 
 # Start program
