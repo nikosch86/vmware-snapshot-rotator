@@ -21,6 +21,10 @@ argparser.add_argument('-u', '--user', required=True, action='store',
     help='User name to use when connecting to host')
 argparser.add_argument('-p', '--password', required=False, action='store',
     help='Password to use when connecting to host')
+argparser.add_argument('-t', '--tag', required=False, action='store',
+    help='Comment to append to the name of new snapshots')
+argparser.add_argument('-m', '--description', required=False, action='store',
+    help='Description to use for new snapshots')
 argparser.add_argument('-k', '--keep', type=int, default=3, action='store',
     help='How many snapshots to keep (default: %(default)s)')
 argparser.add_argument('-n', '--dry-run', action='store_true',
@@ -64,6 +68,7 @@ def main():
 
     snapshots_deleted = 0
     snapshots_created = 0
+    snapshot_deletion_queue = []
 
     for child in content.rootFolder.childEntity:
         if hasattr(child, 'vmFolder'):
@@ -114,7 +119,7 @@ def main():
                     logger.debug("oldest snapshot name: '%s'" % snapshot_paths[0]['name'])
                     create_snapshot(vm, snapshot_name)
                     snapshots_created += 1
-                    delete_snapshot_by_name(vm.snapshot.rootSnapshotList, snapshot_paths[0]['name'])
+                    snapshot_deletion_queue.append({'list': vm.snapshot.rootSnapshotList, 'name': snapshot_paths[0]['name']})
                     snapshots_deleted += 1
                 else:
                     logger.info("%i snapshots found, should create a snapshot and delete all but %i" % (snapshots_no, (args.keep-1)))
@@ -123,24 +128,33 @@ def main():
                     to_delete = snapshots_no - (args.keep-1)
                     delete_count = 0
                     for snapshot in snapshot_paths:
-                        delete_snapshot_by_name(vm.snapshot.rootSnapshotList, snapshot['name'])
+                        snapshot_deletion_queue.append({'list': vm.snapshot.rootSnapshotList, 'name': snapshot_paths[0]['name']})
                         snapshots_deleted += 1
                         delete_count += 1
                         if delete_count >= to_delete:
                             logger.debug("deleted %i snapshots, %i left of %i total" % (delete_count, (args.keep-1), snapshots_no))
                             break
+    for snapshot_deletion_task in snapshot_deletion_queue:
+        delete_snapshot_by_name(snapshot_deletion_task['list'], snapshot_deletion_task['name'])
+
     print("done rotating snapshots, %i created, %i deleted" % (snapshots_created, snapshots_deleted))
     return 0
 
 def create_snapshot(vm, snapshot_name):
+    if vars(args).get('tag'): snapshot_name = "%s %s" % (snapshot_name, args.tag)
+    if vars(args).get('description'): description = args.description
+    else: description = 'Automatic snapshot taken by snapshot rotator tool'
     logger.debug("creating snapshot of VM '%s' using name '%s'" % (vm.summary.config.name, snapshot_name))
     if vars(args).get('dry_run'): return
-    WaitForTask(vm.CreateSnapshot_Task(
-        name=snapshot_name,
-        memory=False,
-        quiesce=False,
-        description='Automatic snapshot taken by snapshot rotator tool'
-    ))
+    try:
+        WaitForTask(vm.CreateSnapshot_Task(
+            name=snapshot_name,
+            memory=False,
+            quiesce=False,
+            description=description
+        ))
+    except Exception as msg:
+        logger.error("error trying to create snapshot %s" % msg)
 
 def list_snapshots_recursively(snapshots):
     snapshot_data = []
