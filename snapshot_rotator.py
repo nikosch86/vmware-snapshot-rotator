@@ -13,8 +13,10 @@ import atexit
 import getpass
 import logging
 import ssl
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Any
 
 import coloredlogs
 from pyVim.connect import Disconnect, SmartConnect
@@ -34,7 +36,8 @@ class SnapshotInfo:
     description: str
     create_time: object  # datetime.datetime as returned by vSphere
     state: object
-    ref: object = field(default=None, repr=False)  # underlying vim.vm.Snapshot
+    # underlying vim.vm.Snapshot managed object; dynamically typed by pyVmomi
+    ref: Any = field(default=None, repr=False)
 
 
 @dataclass
@@ -122,24 +125,16 @@ def resolve_snapshot_name(existing_names, today: date, now: datetime) -> str:
 def plan_rotation(snapshots, keep: int, prune_only: bool) -> RotationPlan:
     """Decide whether to create a snapshot and which existing ones to delete.
 
-    NOTE: this intentionally reproduces the *historical* selection behaviour so
-    the refactor is behaviour-preserving. It has two known bugs that are fixed
-    in a later change and pinned by the test-suite:
-
-    * when ``count > keep`` it selects the oldest snapshot repeatedly instead of
-      the N distinct oldest snapshots;
-    * it assumes ``snapshots`` is already ordered oldest-first (tree order),
-      rather than sorting by ``create_time``.
+    The policy keeps at most ``keep`` snapshots per VM: a new snapshot is created
+    unless ``prune_only`` is set, then the oldest snapshots beyond the limit are
+    selected for deletion. Selection is by ``create_time`` (oldest first), and
+    returns N *distinct* snapshots.
     """
-    count = len(snapshots)
+    ordered = sorted(snapshots, key=lambda s: s.create_time)  # oldest first
     create = not prune_only
-    delete: list = []
-    if count > keep:
-        to_delete = count - (keep - 1)
-        delete = [snapshots[0]] * to_delete  # historical bug: repeats the oldest
-    elif count == keep and create:
-        delete = [snapshots[0]]
-    return RotationPlan(create=create, delete=delete)
+    projected = len(ordered) + (1 if create else 0)
+    num_to_delete = max(0, projected - keep)
+    return RotationPlan(create=create, delete=ordered[:num_to_delete])
 
 
 # --------------------------------------------------------------------------- #
@@ -194,25 +189,16 @@ def create_snapshot(vm, snapshot_name: str, description: str, tag=None, dry_run=
         logger.error("error trying to create snapshot: %s", exc)
 
 
-def get_snapshots_by_name_recursively(snapshot_tree, name: str) -> list:
-    matches = []
-    for node in snapshot_tree or []:
-        if node.name == name:
-            matches.append(node)
-        else:
-            matches.extend(get_snapshots_by_name_recursively(node.childSnapshotList, name))
-    return matches
-
-
-def delete_snapshot_by_name(root_snapshot_list, name: str, dry_run=False) -> None:
-    logger.debug("deleting snapshot '%s'", name)
-    matches = get_snapshots_by_name_recursively(root_snapshot_list, name)
+def delete_snapshot(snapshot: SnapshotInfo, dry_run=False) -> None:
+    # Delete by the captured snapshot reference, not by name: names can collide
+    # (we deliberately disambiguate them on creation), so a name lookup is unsafe.
+    logger.debug("deleting snapshot '%s' (created %s)", snapshot.name, snapshot.create_time)
     if dry_run:
         return
     try:
-        WaitForTask(matches[0].snapshot.RemoveSnapshot_Task(False))
+        WaitForTask(snapshot.ref.RemoveSnapshot_Task(False))
     except Exception as exc:  # noqa: BLE001 - log and continue with other deletions
-        logger.error("error trying to delete snapshot '%s': %s", name, exc)
+        logger.error("error trying to delete snapshot '%s': %s", snapshot.name, exc)
 
 
 def rotate(content, args) -> tuple[int, int]:
@@ -234,11 +220,11 @@ def rotate(content, args) -> tuple[int, int]:
             created += 1
 
         for snap in plan.delete:
-            deletion_queue.append((vm.snapshot.rootSnapshotList, snap.name))
+            deletion_queue.append(snap)
             deleted += 1
 
-    for root_list, snap_name in deletion_queue:
-        delete_snapshot_by_name(root_list, snap_name, dry_run=args.dry_run)
+    for snap in deletion_queue:
+        delete_snapshot(snap, dry_run=args.dry_run)
 
     return created, deleted
 
@@ -274,4 +260,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
