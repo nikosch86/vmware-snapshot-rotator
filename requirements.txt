@@ -1,3 +1,0 @@
-pyVmomi
-coloredlogs
-logger
