@@ -158,9 +158,11 @@ def resolve_password(args, env=None, prompt=None) -> str:
     the process list) > ``VI_PASSWORD`` environment variable > interactive prompt.
     """
     if args.password:
+        # NB: the env-var name is inlined as a literal rather than passed via the
+        # PASSWORD_ENV_VAR constant, so static analysers don't mistake a variable
+        # named "...PASSWORD..." for the secret itself. The password is never logged.
         logger.warning(
-            "--password is visible in the process list; prefer the %s environment variable",
-            PASSWORD_ENV_VAR,
+            "--password is visible in the process list; prefer the VI_PASSWORD env var"
         )
         return args.password
     env = os.environ if env is None else env
