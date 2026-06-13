@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vmware-snapshot-rotator"
+version = "0.2.0"
+description = "Rotate VMware ESXi / vSphere VM snapshots, keeping a fixed number of the most recent."
+readme = "Readme.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    # pyVmomi 8.x dropped Python < 3.10; 8.0+ keeps the SmartConnect API we use.
+    "pyvmomi>=8.0",
+    "coloredlogs>=15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+snapshot-rotator = "snapshot_rotator:main"
+
+[tool.setuptools]
+py-modules = ["snapshot_rotator"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,3 +1,17 @@
+# legacy in-repo virtualenv layout
 bin/
 lib/
 pyvenv.cfg
+
+# virtualenvs
+.venv/
+venv/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# tooling caches
+.pytest_cache/
+.ruff_cache/
