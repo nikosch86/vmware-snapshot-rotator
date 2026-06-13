@@ -12,7 +12,7 @@ import argparse
 import atexit
 import getpass
 import logging
-import ssl
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -59,7 +59,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-u", "--user", required=True, help="User name to use when connecting to host"
     )
-    parser.add_argument("-p", "--password", help="Password to use when connecting to host")
+    parser.add_argument(
+        "-p", "--password",
+        help="Password to connect with (INSECURE: visible in the process list; "
+        "prefer the VI_PASSWORD environment variable)",
+    )
     parser.add_argument("-t", "--tag", help="Comment to append to the name of new snapshots")
     parser.add_argument("-m", "--description", help="Description to use for new snapshots")
     parser.add_argument(
@@ -71,6 +75,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Only prune old snapshots, do not create snapshots",
     )
     parser.add_argument("-n", "--dry-run", action="store_true", help="Dry run")
+    parser.add_argument(
+        "--insecure", action="store_true",
+        help="Disable TLS certificate verification (insecure; use only for self-signed labs)",
+    )
     parser.add_argument("--verbose", "-v", action="count", default=0)
     return parser
 
@@ -140,12 +148,36 @@ def plan_rotation(snapshots, keep: int, prune_only: bool) -> RotationPlan:
 # --------------------------------------------------------------------------- #
 # vSphere I/O
 # --------------------------------------------------------------------------- #
-def connect(host: str, user: str, password: str, port: int):
-    # NOTE: TLS verification is disabled here; this is hardened in a later change.
-    context = None
-    if hasattr(ssl, "_create_unverified_context"):
-        context = ssl._create_unverified_context()
-    return SmartConnect(host=host, user=user, pwd=password, port=int(port), sslContext=context)
+PASSWORD_ENV_VAR = "VI_PASSWORD"
+
+
+def resolve_password(args, env=None, prompt=None) -> str:
+    """Resolve the connection password, preferring safer sources.
+
+    Precedence: explicit ``--password`` flag (with a warning, since it leaks via
+    the process list) > ``VI_PASSWORD`` environment variable > interactive prompt.
+    """
+    if args.password:
+        logger.warning(
+            "--password is visible in the process list; prefer the %s environment variable",
+            PASSWORD_ENV_VAR,
+        )
+        return args.password
+    env = os.environ if env is None else env
+    if env.get(PASSWORD_ENV_VAR):
+        return env[PASSWORD_ENV_VAR]
+    ask = getpass.getpass if prompt is None else prompt
+    return ask(f"Enter password for host {args.host} and user {args.user}: ")
+
+
+def connect(host: str, user: str, password: str, port: int, insecure: bool = False):
+    """Connect to vCenter/ESXi, verifying the TLS certificate unless ``insecure``."""
+    if insecure:
+        logger.warning("TLS certificate verification disabled (--insecure)")
+        return SmartConnect(
+            host=host, user=user, pwd=password, port=int(port), disableSslCertValidation=True
+        )
+    return SmartConnect(host=host, user=user, pwd=password, port=int(port))
 
 
 def iter_vms(content):
@@ -233,12 +265,10 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     configure_logging(args.verbose)
 
-    password = args.password or getpass.getpass(
-        prompt=f"Enter password for host {args.host} and user {args.user}: "
-    )
+    password = resolve_password(args)
 
     try:
-        si = connect(args.host, args.user, password, args.port)
+        si = connect(args.host, args.user, password, args.port, insecure=args.insecure)
     except vim.fault.InvalidLogin:
         logger.error(
             "failed logging in to %s as user %s: invalid credentials", args.host, args.user

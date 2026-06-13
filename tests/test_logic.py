@@ -145,6 +145,7 @@ def test_parse_args_defaults():
     assert args.keep == 3
     assert args.prune_only is False
     assert args.dry_run is False
+    assert args.insecure is False  # TLS verification on by default
     assert args.verbose == 0
 
 
